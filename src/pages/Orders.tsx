@@ -1,65 +1,67 @@
 import { useState, useEffect, useMemo, FC } from 'react';
 import { ordersAPI } from '../api';
 import { useDataStore } from '../store/dataStore';
-import { OrderDetailsModal } from '../components/ui/OrderDetailsModal';
-import { 
-  HiOutlineShoppingBag, 
-  HiOutlineCurrencyDollar, 
-  HiOutlineClock, 
-  HiOutlineTruck,
-  HiOutlineCheckCircle,
-  HiOutlineXCircle,
-  HiOutlineEye,
-  HiOutlineMagnifyingGlass
-} from 'react-icons/hi2';
 import { Order } from '../types';
-import toast from 'react-hot-toast';
-
-// Atomic UI Components
-import { Input } from '../components/ui/Input';
-import { Pagination } from '../components/ui/Pagination';
-import { TableSkeleton } from '../components/ui/TableSkeleton';
-
-// Advanced Hooks
+import { Table, Card, Typography, Tag, Button, Select, Modal, Avatar, Divider, App } from 'antd';
+import {
+  ShoppingCartOutlined,
+  DollarOutlined,
+  ClockCircleOutlined,
+  CarOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  EyeOutlined,
+} from '@ant-design/icons';
+import type { ColumnsType } from 'antd/es/table';
 import { useDebounce } from '../hooks/useDebounce';
-import { cn } from '../utils/cn';
+import dayjs from 'dayjs';
 
-const PAGE_SIZE = 10;
+const { Text } = Typography;
+const PAGE_SIZE = 5;
 
 const Orders: FC = () => {
   const { orders, setOrders } = useDataStore();
-  
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 300);
-  
-  const [currentPage, setCurrentPage] = useState(1);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const { message } = App.useApp();
 
   const fetchData = async () => {
     setLoading(true);
     try {
       const res = await ordersAPI.list();
       const rawData = res.data.data || res.data.orders || res.data.items || (Array.isArray(res.data) ? res.data : []);
-      // Ensure all objects have the expected fields for the filter/UI
-      const data = rawData.map((item: any) => ({
-        ...item,
-        address: item.address || item.delivery_address || 'Ünvan qeyd olunmayıb',
-        date: item.date || (item.created_at ? new Date(item.created_at).toLocaleDateString() : ''),
-        time: item.time || (item.created_at ? new Date(item.created_at).toLocaleTimeString().substring(0, 5) : ''),
-      }));
+      const data = rawData.map((item: any) => {
+        const rawDate = item.date || item.created_at || item.createdAt || item.order_date || item.updatedAt || item.updated_at || '';
+        const parsed = rawDate ? dayjs(rawDate) : null;
+        return {
+          ...item,
+          address: item.address || item.delivery_address || item.deliveryAddress || 'Ünvan qeyd olunmayıb',
+          date: parsed?.isValid() ? parsed.format('DD.MM.YYYY') : '',
+          time: item.time || (parsed?.isValid() ? parsed.format('HH:mm') : ''),
+        };
+      });
       setOrders(data);
-    } catch (err) {
-      console.error('API Error:', err);
-      toast.error('Sifarişlər yüklənərkən xəta baş verdi');
+    } catch {
+      message.error('Sifarişlər yüklənərkən xəta baş verdi');
       if (orders.length === 0) setOrders([]);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { 
-    fetchData(); 
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      setSearch(customEvent.detail || '');
+    };
+    window.addEventListener('globalSearch', handler);
+    return () => window.removeEventListener('globalSearch', handler);
   }, []);
 
   const handleUpdateStatus = (orderId: string, newStatus: Order['status']) => {
@@ -67,167 +69,302 @@ const Orders: FC = () => {
     if (selectedOrder && selectedOrder.id === orderId) {
       setSelectedOrder({ ...selectedOrder, status: newStatus });
     }
-    toast.success('Sifarişin statusu yeniləndi');
-    // Here you would also call an API to update the status in the backend
-    // await ordersAPI.update(orderId, { status: newStatus });
-  };
-
-  const getStatusClass = (status: Order['status']) => {
-    switch (status) {
-      case 'Gözləyir': return 'bg-yellow-50 text-yellow-700 border-yellow-200';
-      case 'Təsdiqləndi': return 'bg-blue-50 text-blue-700 border-blue-200';
-      case 'Çatdırıldı': return 'bg-green-50 text-green-700 border-green-200';
-      case 'Ləğv edildi': return 'bg-red-50 text-red-700 border-red-200';
-      case 'Yoldadır': return 'bg-purple-50 text-purple-700 border-purple-200';
-      default: return 'bg-gray-50 text-gray-700 border-gray-200';
-    }
+    message.success('Sifarişin statusu yeniləndi');
   };
 
   const filteredOrders = useMemo(() => {
-    return orders.filter((o: Order) => 
+    return orders.filter((o: Order) =>
       (o.address || '').toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-      (o.id || '').toLowerCase().includes(debouncedSearch.toLowerCase())
+      String(o.id || '').toLowerCase().includes(debouncedSearch.toLowerCase())
     );
   }, [orders, debouncedSearch]);
 
-  const paginatedData = useMemo(() => {
-    const firstPageIndex = (currentPage - 1) * PAGE_SIZE;
-    const lastPageIndex = firstPageIndex + PAGE_SIZE;
-    return filteredOrders.slice(firstPageIndex, lastPageIndex);
-  }, [currentPage, filteredOrders]);
+  const getStatusTag = (status: string) => {
+    const key = (status || '').toUpperCase();
+    const map: Record<string, { color: string; label: string }> = {
+      'PENDING': { color: 'orange', label: 'Gözləyir' },
+      'GÖZLƏYIR': { color: 'orange', label: 'Gözləyir' },
+      'CONFIRMED': { color: 'green', label: 'Təsdiqləndi' },
+      'TƏSDIQLƏNDI': { color: 'green', label: 'Təsdiqləndi' },
+      'DELIVERED': { color: 'blue', label: 'Çatdırıldı' },
+      'ÇATDIRILDI': { color: 'blue', label: 'Çatdırıldı' },
+      'CANCELLED': { color: 'red', label: 'Ləğv edildi' },
+      'LƏĞV EDILDI': { color: 'red', label: 'Ləğv edildi' },
+      'PREPARING': { color: 'purple', label: 'Hazırlanır' },
+      'YOLDADIR': { color: 'purple', label: 'Yoldadır' },
+    };
+    const config = map[key] || { color: 'default', label: status };
+    return <Tag color={config.color} style={{ borderRadius: 12 }}>{config.label}</Tag>;
+  };
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedSearch]);
+  const totalAmount = useMemo(() => {
+    return filteredOrders.reduce((sum: number, o: Order) => sum + Number(o.total || 0), 0).toFixed(2);
+  }, [filteredOrders]);
 
   const stats = [
-    { label: 'Ümumi sifarişlər', value: filteredOrders.length.toString(), icon: <HiOutlineShoppingBag className="w-6 h-6 text-blue-500" />, bg: 'bg-blue-50' },
-    { label: 'Gözləyən', value: filteredOrders.filter((o: Order) => o.status === 'Gözləyir').length.toString(), icon: <HiOutlineClock className="w-6 h-6 text-yellow-500" />, bg: 'bg-yellow-50' },
-    { label: 'Hazırlanır', value: filteredOrders.filter((o: Order) => o.status === 'Təsdiqləndi').length.toString(), icon: <HiOutlineTruck className="w-6 h-6 text-purple-500" />, bg: 'bg-purple-50' },
-    { label: 'Çatdırılan', value: filteredOrders.filter((o: Order) => o.status === 'Çatdırıldı').length.toString(), icon: <HiOutlineCheckCircle className="w-6 h-6 text-green-500" />, bg: 'bg-green-50' },
-    { label: 'Ləğv edilən', value: filteredOrders.filter((o: Order) => o.status === 'Ləğv edildi').length.toString(), icon: <HiOutlineXCircle className="w-6 h-6 text-red-500" />, bg: 'bg-red-50' },
+    {
+      label: 'Ümumi sifarişlər',
+      value: filteredOrders.length,
+      icon: <ShoppingCartOutlined style={{ fontSize: 16, color: '#1890ff' }} />,
+    },
+    {
+      label: 'Ümumi satış',
+      value: totalAmount,
+      icon: <DollarOutlined style={{ fontSize: 16, color: '#52c41a' }} />,
+      prefix: '₼',
+    },
+    {
+      label: 'Gözləyən',
+      value: filteredOrders.filter((o: Order) => ['PENDING'].includes(String(o.status).toUpperCase())).length,
+      icon: <ClockCircleOutlined style={{ fontSize: 16, color: '#faad14' }} />,
+    },
+    {
+      label: 'Hazırlanır',
+      value: filteredOrders.filter((o: Order) => ['CONFIRMED', 'PREPARING'].includes(String(o.status).toUpperCase())).length,
+      icon: <CarOutlined style={{ fontSize: 16, color: '#722ed1' }} />,
+    },
+    {
+      label: 'Çatdırılan',
+      value: filteredOrders.filter((o: Order) => ['DELIVERED'].includes(String(o.status).toUpperCase())).length,
+      icon: <CheckCircleOutlined style={{ fontSize: 16, color: '#52c41a' }} />,
+    },
+    {
+      label: 'Ləğv edilən',
+      value: filteredOrders.filter((o: Order) => ['CANCELLED'].includes(String(o.status).toUpperCase())).length,
+      icon: <CloseCircleOutlined style={{ fontSize: 16, color: '#ff4d4f' }} />,
+    },
+  ];
+
+  const columns: ColumnsType<Order> = [
+    {
+      title: 'No',
+      key: 'id',
+      width: 90,
+      render: (_: unknown, record: Order) => (
+        <Text strong style={{ fontSize: 13 }}>ORD-{String(record.id).slice(0, 2)}...</Text>
+      ),
+    },
+    {
+      title: 'Tarix',
+      key: 'date',
+      width: 70,
+      sorter: true,
+      render: (_: unknown, record: Order) => (
+        <span style={{ fontSize: 13 }}>{record.time || record.date || '-'}</span>
+      ),
+    },
+    {
+      title: 'Çatdırılma ünvanı',
+      dataIndex: 'address',
+      key: 'address',
+      ellipsis: true,
+      render: (addr: string) => <span style={{ fontSize: 13 }}>{addr}</span>,
+    },
+    {
+      title: 'Məhsul sayı',
+      dataIndex: 'itemCount',
+      key: 'itemCount',
+      width: 90,
+      align: 'center' as const,
+      sorter: true,
+      render: (count: number) => <span style={{ fontSize: 13 }}>{count || '-'}</span>,
+    },
+    {
+      title: 'Subtotal/Çatdırılma',
+      key: 'total',
+      width: 150,
+      sorter: true,
+      render: (_: unknown, record: Order) => (
+        <span style={{ fontSize: 13 }}>
+          <Text strong>{Number(record.total || 0).toFixed(2)} ₼</Text>
+          <Text type="secondary" style={{ fontSize: 11 }}> · Pulsuz</Text>
+        </span>
+      ),
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      width: 120,
+      filters: [
+        { text: 'Gözləyir', value: 'PENDING' },
+        { text: 'Təsdiqləndi', value: 'CONFIRMED' },
+        { text: 'Çatdırıldı', value: 'DELIVERED' },
+        { text: 'Ləğv edildi', value: 'CANCELLED' },
+        { text: 'Hazırlanır', value: 'PREPARING' },
+      ],
+      onFilter: (value, record) => String(record.status).toUpperCase() === String(value).toUpperCase(),
+      render: (status: Order['status']) => getStatusTag(status),
+    },
+    {
+      title: 'Əməliyyat',
+      key: 'actions',
+      align: 'center' as const,
+      width: 90,
+      render: (_: unknown, record: Order) => (
+        <Button
+          type="link"
+          icon={<EyeOutlined />}
+          onClick={() => setSelectedOrder(record)}
+          style={{ color: '#52c41a', padding: 0, fontSize: 13 }}
+        >
+          Göstər
+        </Button>
+      ),
+    },
   ];
 
   return (
-    <div className="flex flex-col gap-6 h-full pb-8">
-      
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        {stats.map((stat, idx) => (
-          <div key={idx} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 flex flex-col transition-transform hover:-translate-y-1 hover:shadow-md duration-300">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-sm font-medium text-gray-500">{stat.label}</span>
-              <div className={cn("p-2 rounded-xl", stat.bg)}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <Card variant="borderless" style={{ borderRadius: 16, padding: '4px 0' }}>
+        <Text strong style={{ fontSize: 20, color: '#2b3043', display: 'block', marginBottom: 16 }}>
+          Sifarişlər
+        </Text>
+        <div className="stat-cards-row">
+          {stats.map((stat, idx) => (
+            <div key={idx} className="stat-card-item">
+              <div className="stat-label">
                 {stat.icon}
+                <span style={{ marginLeft: 6 }}>{stat.label}</span>
+              </div>
+              <div className="stat-value">
+                {stat.prefix && <span style={{ fontSize: 14, marginRight: 2 }}>{stat.prefix}</span>}
+                {stat.value}
               </div>
             </div>
-            <div className="text-3xl font-black text-gray-900 tracking-tight">{stat.value}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Main Table Card */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 flex flex-col flex-1">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-          <h2 className="text-xl font-bold text-gray-900">Sifarişlər İdarəetməsi</h2>
-          
-          <div className="w-full sm:w-72">
-            <Input 
-              placeholder="Sifariş ID və ya Ünvanla axtarış..." 
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              icon={<HiOutlineMagnifyingGlass className="w-5 h-5" />}
-              className="w-full"
-            />
-          </div>
+          ))}
         </div>
+      </Card>
 
-        <div className="overflow-x-auto min-h-[400px]">
-          {loading && orders.length === 0 ? (
-            <TableSkeleton columns={8} rows={PAGE_SIZE} />
-          ) : (
-            <table className="w-full text-left border-collapse whitespace-nowrap">
-              <thead>
-                <tr className="border-b border-gray-100 text-sm font-medium text-gray-500 bg-gray-50/50">
-                  <th className="p-4 font-medium uppercase tracking-wider text-xs">No</th>
-                  <th className="p-4 font-medium uppercase tracking-wider text-xs">Tarix</th>
-                  <th className="p-4 font-medium uppercase tracking-wider text-xs">Saat</th>
-                  <th className="p-4 font-medium uppercase tracking-wider text-xs">Çatdırılma Ünvanı</th>
-                  <th className="p-4 font-medium uppercase tracking-wider text-xs">Məhsul sayı</th>
-                  <th className="p-4 font-medium uppercase tracking-wider text-xs">Məbləğ / Çatdırılma</th>
-                  <th className="p-4 font-medium uppercase tracking-wider text-xs">Status</th>
-                  <th className="p-4 font-medium uppercase tracking-wider text-xs text-right">Əməliyyat</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedData.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="text-center p-12 text-gray-400">
-                      Siyahıda ən azı bir sifariş tapılmadı.
-                    </td>
-                  </tr>
-                ) : (
-                  paginatedData.map((item: Order, idx: number) => (
-                    <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                      <td className="p-4 font-bold text-gray-900">#{item.id}</td>
-                      <td className="p-4 text-gray-600">{item.date}</td>
-                      <td className="p-4 text-gray-600 font-mono bg-gray-50 text-xs text-center rounded-lg mt-3 inline-block">{item.time}</td>
-                      <td className="p-4 text-gray-800 truncate max-w-[200px]">{item.address}</td>
-                      <td className="p-4 text-center">
-                        <span className="bg-gray-100 text-gray-600 py-1 px-3 rounded-full text-sm font-medium">
-                          {item.itemCount}
-                        </span>
-                      </td>
-                      <td className="p-4">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-gray-900">{item.total} ₼</span>
-                          <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full font-medium">
-                            {item.deliveryFee}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="p-4">
-                        <span className={cn("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border", getStatusClass(item.status))}>
-                          {item.status}
-                        </span>
-                      </td>
-                      <td className="p-4 text-right">
-                        <div className="flex justify-end gap-2">
-                          <button 
-                            className="p-2 text-gray-500 hover:text-primary hover:bg-blue-50 rounded-lg transition-colors border border-transparent hover:border-blue-100 shadow-sm hover:shadow"
-                            title="Ətraflı Bax" 
-                            onClick={() => setSelectedOrder(item)}
-                          >
-                            <HiOutlineEye className="w-5 h-5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        {!loading && filteredOrders.length > 0 && (
-          <Pagination
-            className="mt-6"
-            currentPage={currentPage}
-            totalCount={filteredOrders.length}
-            pageSize={PAGE_SIZE}
-            onPageChange={setCurrentPage}
-          />
-        )}
-      </div>
-
-      {selectedOrder && (
-        <OrderDetailsModal 
-          order={selectedOrder} 
-          onClose={() => setSelectedOrder(null)} 
-          onUpdateStatus={handleUpdateStatus}
+      <Card variant="borderless" style={{ borderRadius: 16 }}>
+        <Table
+          columns={columns}
+          dataSource={filteredOrders}
+          rowKey={(record) => String(record.id)}
+          loading={loading}
+          pagination={{
+            pageSize: PAGE_SIZE,
+            showTotal: (total, range) => `${range[0]}-${range[1]} / ${total} nəticə`,
+            showSizeChanger: true,
+            pageSizeOptions: ['5', '10', '20'],
+          }}
+          size="middle"
+          tableLayout="fixed"
         />
-      )}
+      </Card>
+
+      <Modal
+        open={!!selectedOrder}
+        onCancel={() => setSelectedOrder(null)}
+        footer={null}
+        centered
+        width={600}
+        title={null}
+        closable
+        styles={{ body: { padding: 0 } }}
+      >
+        {selectedOrder && (
+          <>
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Avatar style={{ backgroundColor: '#52c41a', fontWeight: 700 }} size={32}>
+                {String(selectedOrder.id).slice(-1) || '0'}
+              </Avatar>
+              <Text strong style={{ fontSize: 16 }}>ORD-{selectedOrder.id}</Text>
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Status</Text>
+                  <Select
+                    value={selectedOrder.status}
+                    onChange={(val) => handleUpdateStatus(selectedOrder.id, val as Order['status'])}
+                    size="small"
+                    style={{ width: 130 }}
+                    options={[
+                      { value: 'PENDING', label: 'Gözləyir' },
+                      { value: 'CONFIRMED', label: 'Təsdiqləndi' },
+                      { value: 'DELIVERED', label: 'Çatdırıldı' },
+                      { value: 'CANCELLED', label: 'Ləğv edildi' },
+                      { value: 'PREPARING', label: 'Hazırlanır' },
+                    ]}
+                  />
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Ümumi məbləğ</Text>
+                  <Text strong style={{ fontSize: 16, color: '#52c41a' }}>{selectedOrder.total} ₼</Text>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ padding: '20px 24px' }}>
+              <Text strong style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Sifariş Məlumatları
+              </Text>
+              <div style={{ marginTop: 16, background: '#fafafa', borderRadius: 12, padding: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px', fontSize: 13 }}>
+                  <div>
+                    <Text type="secondary" style={{ display: 'block', marginBottom: 2 }}>Tarix:</Text>
+                    <Text strong>{selectedOrder.date} {selectedOrder.time}</Text>
+                  </div>
+                  <div>
+                    <Text type="secondary" style={{ display: 'block', marginBottom: 2 }}>Çatdırılma Ünvanı:</Text>
+                    <Text strong>{selectedOrder.address}</Text>
+                  </div>
+                  <div>
+                    <Text type="secondary" style={{ display: 'block', marginBottom: 2 }}>Telefon:</Text>
+                    <Text strong>{(selectedOrder as any).phone || '+994XXXXXXXXX'}</Text>
+                  </div>
+                  <div>
+                    <Text type="secondary" style={{ display: 'block', marginBottom: 2 }}>Ödəmə Metodu:</Text>
+                    <Text strong>{(selectedOrder as any).payment_method || 'Kart'}</Text>
+                  </div>
+                </div>
+              </div>
+
+              <Divider style={{ margin: '20px 0 16px' }} />
+
+              <Text strong style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Məhsullar ({selectedOrder.itemCount || 1})
+              </Text>
+              <div style={{ marginTop: 12 }}>
+                {((selectedOrder as any).items || [(selectedOrder as any)]).slice(0, 5).map((item: any, idx: number) => (
+                  <div key={idx} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: 12, background: '#fff', border: '1px solid #f0f0f0', borderRadius: 12, marginBottom: 8
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <img
+                        src={item.img_url || item.image || item.photo || '/logo-mock.png'}
+                        alt=""
+                        style={{ width: 48, height: 48, borderRadius: 8, objectFit: 'cover', background: '#f5f5f5' }}
+                        onError={(e) => { e.currentTarget.src = '/logo-mock.png'; }}
+                      />
+                      <div>
+                        <Text strong style={{ display: 'block' }}>{item.title || item.product_name || 'Məhsul'}</Text>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {item.category?.name || item.category || ''}{item.weight ? ` · ${item.weight}` : ''}{item.type ? ` · ${item.type}` : ''}
+                        </Text>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <Text strong style={{ color: '#52c41a', display: 'block' }}>
+                        {item.price || item.total || selectedOrder.total} ₼
+                      </Text>
+                      {item.unit_price && (
+                        <Text type="secondary" style={{ fontSize: 11 }}>{item.unit_price} ₼/kq</Text>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+                <Tag color="green" style={{ borderRadius: 8, padding: '4px 12px', fontSize: 13 }}>
+                  Çatdırılma: {selectedOrder.deliveryFee || 'Pulsuz'}
+                </Tag>
+              </div>
+            </div>
+          </>
+        )}
+      </Modal>
     </div>
   );
 };

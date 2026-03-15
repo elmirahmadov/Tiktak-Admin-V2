@@ -1,57 +1,56 @@
 import { FC } from 'react';
-import { NavLink } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Menu } from 'antd';
+import {
+  ShoppingCartOutlined,
+  TagsOutlined,
+  AppstoreOutlined,
+  ShoppingOutlined,
+  UserOutlined,
+  LogoutOutlined,
+} from '@ant-design/icons';
 import { useAuthStore } from '../store/authStore';
-import { 
-  HiOutlineShoppingBag, 
-  HiOutlineTag, 
-  HiOutlineQueueList, 
-  HiOutlineUsers, 
-  HiOutlineFlag, 
-  HiOutlineArrowRightOnRectangle 
-} from 'react-icons/hi2';
 
 const Sidebar: FC = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
   const logout = useAuthStore(state => state.logout);
 
+  const currentKey = location.pathname.replace('/', '') || 'orders';
+
   const menuItems = [
-    { name: 'Kampaniyalar', path: '/campaigns', icon: <HiOutlineFlag /> },
-    { name: 'Kateqoriyalar', path: '/categories', icon: <HiOutlineTag /> },
-    { name: 'Məhsullar', path: '/products', icon: <HiOutlineQueueList /> },
-    { name: 'İstifadəçilər', path: '/users', icon: <HiOutlineUsers /> },
-    { name: 'Sifarişlər', path: '/orders', icon: <HiOutlineShoppingBag /> },
+    { key: 'orders', icon: <ShoppingCartOutlined />, label: 'Sifarişlər' },
+    { key: 'campaigns', icon: <TagsOutlined />, label: 'Kampaniyalar' },
+    { key: 'categories', icon: <AppstoreOutlined />, label: 'Kateqoriyalar' },
+    { key: 'products', icon: <ShoppingOutlined />, label: 'Məhsullar' },
+    { key: 'users', icon: <UserOutlined />, label: 'İstifadəçilər' },
+    { type: 'divider' as const },
+    {
+      key: 'logout',
+      icon: <LogoutOutlined />,
+      label: 'Çıxış',
+      danger: true,
+    },
   ];
 
+  const handleClick = ({ key }: { key: string }) => {
+    if (key === 'logout') {
+      logout();
+      return;
+    }
+    navigate(`/${key}`);
+  };
+
   return (
-    <aside className="sidebar-container">
-      <nav className="sidebar-nav">
-        {menuItems.map((item) => (
-          <NavLink
-            key={item.path}
-            to={item.path}
-            className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
-          >
-            <span className="nav-icon">{item.icon}</span>
-            <span className="nav-text">{item.name}</span>
-          </NavLink>
-        ))}
-        
-        <button 
-          className="sidebar-link logout-btn" 
-          onClick={logout} 
-          style={{ 
-            marginTop: 'auto', 
-            border: 'none', 
-            width: '100%', 
-            textAlign: 'left', 
-            background: 'none', 
-            cursor: 'pointer' 
-          }}
-        >
-          <span className="nav-icon"><HiOutlineArrowRightOnRectangle /></span>
-          <span className="nav-text">Çıxış</span>
-        </button>
-      </nav>
-    </aside>
+    <div className="sidebar-menu">
+      <Menu
+        mode="inline"
+        selectedKeys={[currentKey]}
+        onClick={handleClick}
+        items={menuItems}
+        style={{ border: 'none', background: 'transparent', fontSize: 14 }}
+      />
+    </div>
   );
 };
 

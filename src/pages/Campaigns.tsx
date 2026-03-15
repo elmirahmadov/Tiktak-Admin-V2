@@ -1,21 +1,17 @@
 import { useState, useEffect, useMemo, FC } from 'react';
 import { campaignsAPI } from '../api';
 import { useDataStore } from '../store/dataStore';
-import { HiOutlinePencilSquare, HiOutlineTrash, HiPlus, HiOutlineMagnifyingGlass } from 'react-icons/hi2';
 import { Campaign } from '../types';
-import toast from 'react-hot-toast';
-
-// Atomic UI Components
-import { Button } from '../components/ui/Button';
-import { Input } from '../components/ui/Input';
-import { Pagination } from '../components/ui/Pagination';
-import { TableSkeleton } from '../components/ui/TableSkeleton';
-import { DeleteModal } from '../components/ui/DeleteModal';
-import { CampaignForm } from '../components/forms/CampaignForm';
-
-// Advanced Hooks
+import { Table, Button, Card, Typography, Space, Modal, Form, Input, Switch, App } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import DeleteConfirmModal from '../components/DeleteConfirmModal';
+import type { ColumnsType } from 'antd/es/table';
 import { useDebounce } from '../hooks/useDebounce';
+import { getImageUrl } from '../utils/imageUrl';
+import dayjs from 'dayjs';
 
+const { Title } = Typography;
+const { TextArea } = Input;
 const PAGE_SIZE = 10;
 
 const Campaigns: FC = () => {
@@ -27,11 +23,13 @@ const Campaigns: FC = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 300);
-  
-  const [currentPage, setCurrentPage] = useState(1);
   const [showFormModal, setShowFormModal] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
+  const [form] = Form.useForm();
+  const [submitting, setSubmitting] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Campaign | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const { message } = App.useApp();
 
   const fetchData = async () => {
     setLoading(true);
@@ -39,9 +37,8 @@ const Campaigns: FC = () => {
       const res = await campaignsAPI.list();
       const data = res.data.data || res.data.campaigns || (Array.isArray(res.data) ? res.data : []);
       setCampaigns(data);
-    } catch (err) {
-      console.error('API Error:', err);
-      toast.error('Kampaniyalar yüklənərkən xəta baş verdi');
+    } catch {
+      message.error('Kampaniyalar yüklənərkən xəta baş verdi');
       if (campaigns.length === 0) setCampaigns([]);
     } finally {
       setLoading(false);
@@ -52,7 +49,15 @@ const Campaigns: FC = () => {
     fetchData();
   }, []);
 
-  // Filter campaigns based on debounced search
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      setSearch(customEvent.detail || '');
+    };
+    window.addEventListener('globalSearch', handler);
+    return () => window.removeEventListener('globalSearch', handler);
+  }, []);
+
   const filteredCampaigns = useMemo(() => {
     return campaigns.filter((c: Campaign) =>
       (c.title || '').toLowerCase().includes(debouncedSearch.toLowerCase()) ||
@@ -60,170 +65,200 @@ const Campaigns: FC = () => {
     );
   }, [campaigns, debouncedSearch]);
 
-  // Pagination logic
-  const paginatedData = useMemo(() => {
-    const firstPageIndex = (currentPage - 1) * PAGE_SIZE;
-    const lastPageIndex = firstPageIndex + PAGE_SIZE;
-    return filteredCampaigns.slice(firstPageIndex, lastPageIndex);
-  }, [currentPage, filteredCampaigns]);
-
-  // Reset page when search changes
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedSearch]);
-
   const handleOpenForm = (item: Campaign | null = null) => {
     setSelectedCampaign(item);
+    if (item) {
+      form.setFieldsValue({
+        title: item.title,
+        description: item.description,
+        is_active: item.is_active !== undefined ? item.is_active : true,
+      });
+    } else {
+      form.resetFields();
+      form.setFieldsValue({ is_active: true });
+    }
     setShowFormModal(true);
   };
 
-  const handleSaveCampaign = async (payload: Omit<Campaign, 'id'>, id?: string | number) => {
-    if (id) {
-      await campaignsAPI.update(id, payload);
-      updateCampaign(id, { ...payload, id });
-      toast.success('Kampaniya uğurla yeniləndi');
-    } else {
-      const newId = Math.floor(Math.random() * 900000) + 100000;
-      const newItem: Campaign = { id: newId, ...payload };
-      await campaignsAPI.create(payload);
-      addCampaign(newItem);
-      toast.success('Yeni kampaniya əlavə edildi');
+  const handleSaveCampaign = async () => {
+    try {
+      const values = await form.validateFields();
+      setSubmitting(true);
+      const payload = {
+        title: values.title,
+        description: values.description || '',
+        image: '',
+        is_active: values.is_active,
+      };
+
+      if (selectedCampaign?.id) {
+        await campaignsAPI.update(selectedCampaign.id, payload);
+        updateCampaign(selectedCampaign.id, { ...payload, id: selectedCampaign.id });
+        message.success('Kampaniya uğurla yeniləndi');
+      } else {
+        const newId = Math.floor(Math.random() * 900000) + 100000;
+        await campaignsAPI.create(payload);
+        addCampaign({ id: newId, ...payload });
+        message.success('Yeni kampaniya əlavə edildi');
+      }
+      setShowFormModal(false);
+      form.resetFields();
+    } catch (err: any) {
+      if (err?.errorFields) return;
+      message.error('Gözlənilməz xəta baş verdi');
+    } finally {
+      setSubmitting(false);
     }
-    setShowFormModal(false);
   };
 
-  const handleDeleteConfirm = async () => {
-    if (!selectedCampaign) return;
+  const handleDelete = (item: Campaign) => {
+    setDeleteTarget(item);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await campaignsAPI.remove(selectedCampaign.id);
-      deleteCampaign(selectedCampaign.id);
-      toast.success('Kampaniya silindi');
-      setShowDeleteModal(false);
-      setSelectedCampaign(null);
-    } catch (err) {
-      console.error('Delete error:', err);
-      toast.error('Silinmə zamanı xəta baş verdi');
+      await campaignsAPI.remove(deleteTarget.id);
+      deleteCampaign(deleteTarget.id);
+      message.success('Kampaniya silindi');
+      setDeleteTarget(null);
+    } catch {
+      message.error('Silinmə zamanı xəta baş verdi');
+    } finally {
+      setDeleting(false);
     }
   };
+
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return '-';
+    const d = dayjs(dateStr);
+    return d.isValid() ? d.format('DD.MM.YYYY') : dateStr;
+  };
+
+  const columns: ColumnsType<Campaign> = [
+    {
+      title: 'Sıra',
+      key: 'index',
+      width: 50,
+      render: (_: unknown, __: Campaign, index: number) => index + 1,
+    },
+    {
+      title: 'Şəkil',
+      key: 'image',
+      width: 60,
+      render: (_: unknown, record: Campaign) => {
+        const raw = record as any;
+        const imgSrc = raw.img_url || raw.image || raw.photo || '';
+        const url = imgSrc.startsWith('http') ? imgSrc : getImageUrl(imgSrc);
+        return (
+          <img
+            src={url || '/logo-mock.png'}
+            alt=""
+            style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover' }}
+            onError={(e) => { e.currentTarget.src = '/logo-mock.png'; }}
+          />
+        );
+      },
+    },
+    {
+      title: 'Başlıq',
+      dataIndex: 'title',
+      key: 'title',
+      sorter: (a: Campaign, b: Campaign) => (a.title || '').localeCompare(b.title || ''),
+      render: (title: string) => <strong>{title}</strong>,
+    },
+    {
+      title: 'Açıqlama',
+      dataIndex: 'description',
+      key: 'description',
+      ellipsis: true,
+      render: (desc: string) => desc || '-',
+    },
+    {
+      title: 'Tarix',
+      key: 'date',
+      width: 110,
+      render: (_: unknown, record: Campaign) => formatDate((record as any).created_at),
+    },
+    {
+      title: 'Əməliyyat',
+      key: 'actions',
+      align: 'center' as const,
+      width: 100,
+      render: (_: unknown, record: Campaign) => (
+        <Space>
+          <Button
+            type="text"
+            icon={<EditOutlined />}
+            onClick={() => handleOpenForm(record)}
+            style={{ color: '#52c41a' }}
+          />
+          <Button
+            type="text"
+            icon={<DeleteOutlined />}
+            onClick={() => handleDelete(record)}
+            danger
+          />
+        </Space>
+      ),
+    },
+  ];
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 flex flex-col h-full">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-        <h2 className="text-xl font-bold text-gray-900">Kampaniyalar</h2>
-        
-        <div className="flex gap-3 w-full sm:w-auto">
-          <Input 
-            placeholder="Axtarış..." 
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            icon={<HiOutlineMagnifyingGlass className="w-5 h-5" />}
-            className="w-full sm:w-64"
-          />
-          <Button onClick={() => handleOpenForm(null)}>
-            <HiPlus className="w-5 h-5 mr-1" /> Yeni Kampaniya
-          </Button>
-        </div>
+    <Card variant="borderless" style={{ borderRadius: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <Title level={4} style={{ margin: 0, color: '#2b3043' }}>Kampaniyalar</Title>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => handleOpenForm(null)}>
+          Yeni Kampaniya
+        </Button>
       </div>
 
-      <div className="overflow-x-auto min-h-[400px]">
-        {loading && campaigns.length === 0 ? (
-          <TableSkeleton columns={4} rows={PAGE_SIZE} />
-        ) : (
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-gray-100 text-sm font-medium text-gray-500 bg-gray-50/50">
-                <th className="p-4 font-medium">Başlıq</th>
-                <th className="p-4 font-medium w-1/2">Açıqlama</th>
-                <th className="p-4 font-medium">Status</th>
-                <th className="p-4 font-medium text-right">Əməliyyat</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginatedData.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="text-center p-12 text-gray-400">
-                    Siyahıda kampaniya tapılmadı.
-                  </td>
-                </tr>
-              ) : (
-                paginatedData.map((item: Campaign) => (
-                  <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                    <td className="p-4 font-semibold text-gray-900">
-                      {item.title}
-                    </td>
-                    <td className="p-4 text-sm text-gray-500 truncate max-w-sm">
-                      {item.description || '-'}
-                    </td>
-                    <td className="p-4">
-                      {item.is_active ? (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">
-                          Aktiv
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200">
-                          Passiv
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-4 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button 
-                          className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Düzəlt"
-                          onClick={() => handleOpenForm(item)}
-                        >
-                          <HiOutlinePencilSquare className="w-5 h-5" />
-                        </button>
-                        <button 
-                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Sil"
-                          onClick={() => {
-                            setSelectedCampaign(item);
-                            setShowDeleteModal(true);
-                          }}
-                        >
-                          <HiOutlineTrash className="w-5 h-5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <Table
+        columns={columns}
+        dataSource={filteredCampaigns}
+        rowKey={(record) => String(record.id)}
+        loading={loading}
+        pagination={{
+          pageSize: PAGE_SIZE,
+          showTotal: (total, range) => `${range[0]}-${range[1]} / ${total} nəticə`,
+          showSizeChanger: false,
+        }}
+        size="middle"
+        tableLayout="fixed"
+      />
 
-      {!loading && filteredCampaigns.length > 0 && (
-        <Pagination
-          className="mt-6"
-          currentPage={currentPage}
-          totalCount={filteredCampaigns.length}
-          pageSize={PAGE_SIZE}
-          onPageChange={setCurrentPage}
-        />
-      )}
+      <Modal
+        title={selectedCampaign ? 'Kampaniyanı düzəlt' : 'Yeni Kampaniya'}
+        open={showFormModal}
+        onCancel={() => { setShowFormModal(false); form.resetFields(); }}
+        onOk={handleSaveCampaign}
+        okText="Yadda saxla"
+        cancelText="İmtina"
+        confirmLoading={submitting}
+        centered
+        forceRender
+      >
+        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item name="title" label="Ad" rules={[{ required: true, message: 'Kampaniya adı mütləqdir' }]}>
+            <Input placeholder="Kampaniyanın adı" />
+          </Form.Item>
+          <Form.Item name="description" label="Açıqlama">
+            <TextArea rows={3} placeholder="Kampaniya haqqında məlumat..." />
+          </Form.Item>
+          <Form.Item name="is_active" label="Aktivdir" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+        </Form>
+      </Modal>
 
-      {showFormModal && (
-        <CampaignForm 
-          initialData={selectedCampaign}
-          onClose={() => setShowFormModal(false)}
-          onSave={handleSaveCampaign}
-        />
-      )}
-
-      {showDeleteModal && (
-        <DeleteModal
-          onClose={() => {
-            setShowDeleteModal(false);
-            setSelectedCampaign(null);
-          }}
-          onConfirm={handleDeleteConfirm}
-          title="Kampaniyanı Sil"
-          message={`"${selectedCampaign?.title}" adlı kampaniyanı silmək istədiyinizə əminsiniz?`}
-        />
-      )}
-    </div>
+      <DeleteConfirmModal
+        open={!!deleteTarget}
+        loading={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
+    </Card>
   );
 };
 

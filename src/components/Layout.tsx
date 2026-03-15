@@ -1,5 +1,7 @@
 import { FC, useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { Input } from 'antd';
+import { SearchOutlined } from '@ant-design/icons';
 import Sidebar from './Sidebar';
 
 const Layout: FC = () => {
@@ -15,30 +17,29 @@ const Layout: FC = () => {
       const event = new CustomEvent('globalSearch', { detail: search });
       window.dispatchEvent(event);
     }, 600);
-
     return () => clearTimeout(handler);
   }, [search]);
 
   return (
-    <div className="admin-wrapper">
-      <header className="admin-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>TİK TAK ADMİN</h1>
-        <div className="search-input-wrapper" style={{ margin: '0', maxWidth: '300px' }}>
-          <input 
-            type="text" 
-            placeholder="Axtarılan" 
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-        <div style={{ width: '150px' }}></div>
-      </header>
+    <div className="admin-layout-wrapper">
+      <div className="admin-header-bar">
+        <h1>TIK TAK ADMİN</h1>
+        <Input
+          placeholder="Axtarış..."
+          prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ maxWidth: 300, borderRadius: 20, background: '#f7f8fc', borderColor: '#f0f0f0' }}
+          allowClear
+        />
+        <div style={{ width: 100 }} />
+      </div>
 
-      <div className="admin-main">
+      <div className="admin-body">
         <Sidebar />
-        <main className="page-container">
+        <div className="page-content-area">
           <Outlet />
-        </main>
+        </div>
       </div>
     </div>
   );

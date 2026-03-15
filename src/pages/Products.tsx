@@ -1,22 +1,25 @@
 import { useState, useEffect, useMemo, FC } from 'react';
 import { productsAPI, categoriesAPI } from '../api';
 import { useDataStore } from '../store/dataStore';
-import { HiOutlinePencilSquare, HiOutlineTrash, HiPlus, HiOutlineMagnifyingGlass } from 'react-icons/hi2';
 import { Product, Category } from '../types';
-import toast from 'react-hot-toast';
-
-// Atomic UI Components
-import { Button } from '../components/ui/Button';
-import { Input } from '../components/ui/Input';
-import { Pagination } from '../components/ui/Pagination';
-import { TableSkeleton } from '../components/ui/TableSkeleton';
-import { DeleteModal } from '../components/ui/DeleteModal';
-import { ProductForm } from '../components/forms/ProductForm';
-
-// Advanced Hooks
+import { Table, Button, Card, Typography, Space, Tag, Modal, Form, Input, Select, InputNumber, Upload, App } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, UploadOutlined } from '@ant-design/icons';
+import DeleteConfirmModal from '../components/DeleteConfirmModal';
+import type { ColumnsType } from 'antd/es/table';
 import { useDebounce } from '../hooks/useDebounce';
+import { useImageUpload } from '../hooks/useImageUpload';
+import dayjs from 'dayjs';
 
-const PAGE_SIZE = 10;
+const { Title } = Typography;
+const { TextArea } = Input;
+const PAGE_SIZE = 5;
+
+const resolveImg = (record: any): string => {
+  const raw = record.img_url || record.image || record.photo || record.thumbnail || '';
+  if (!raw) return '';
+  if (raw.startsWith('http')) return raw;
+  return `https://api.sarkhanrahimli.dev${raw.startsWith('/') ? '' : '/'}${raw}`;
+};
 
 const Products: FC = () => {
   const {
@@ -28,11 +31,14 @@ const Products: FC = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 300);
-  
-  const [currentPage, setCurrentPage] = useState(1);
   const [showFormModal, setShowFormModal] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [form] = Form.useForm();
+  const [submitting, setSubmitting] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const { message } = App.useApp();
+  const { uploading, imageUrl, setImageUrl, uploadImage, reset: resetImage } = useImageUpload();
 
   const fetchData = async () => {
     setLoading(true);
@@ -41,15 +47,12 @@ const Products: FC = () => {
         productsAPI.list(),
         categoriesAPI.list()
       ]);
-
       const productData = prodRes.data.data || prodRes.data.products || (Array.isArray(prodRes.data) ? prodRes.data : []);
       const categoryData = catRes.data.data || catRes.data.categories || (Array.isArray(catRes.data) ? catRes.data : []);
-
       setProducts(productData);
       setCategories(categoryData);
-    } catch (err) {
-      console.error('API Error:', err);
-      toast.error('Məlumatlar yüklənərkən xəta baş verdi');
+    } catch {
+      message.error('Məlumatlar yüklənərkən xəta baş verdi');
       if (products.length === 0) setProducts([]);
     } finally {
       setLoading(false);
@@ -60,7 +63,15 @@ const Products: FC = () => {
     fetchData();
   }, []);
 
-  // Filter products based on debounced search
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      setSearch(customEvent.detail || '');
+    };
+    window.addEventListener('globalSearch', handler);
+    return () => window.removeEventListener('globalSearch', handler);
+  }, []);
+
   const filteredProducts = useMemo(() => {
     return products.filter((p: Product) =>
       (p.title || '').toLowerCase().includes(debouncedSearch.toLowerCase()) ||
@@ -68,180 +79,302 @@ const Products: FC = () => {
     );
   }, [products, debouncedSearch]);
 
-  // Pagination logic
-  const paginatedData = useMemo(() => {
-    const firstPageIndex = (currentPage - 1) * PAGE_SIZE;
-    const lastPageIndex = firstPageIndex + PAGE_SIZE;
-    return filteredProducts.slice(firstPageIndex, lastPageIndex);
-  }, [currentPage, filteredProducts]);
-
-  // Reset page when search changes
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedSearch]);
-
   const handleOpenForm = (item: Product | null = null) => {
     setSelectedProduct(item);
+    if (item) {
+      const raw = item as any;
+      form.setFieldsValue({
+        title: item.title,
+        description: item.description,
+        price: Number(item.price),
+        category_id: raw.category?.id ? String(raw.category.id) : String(item.category_id || ''),
+        type: raw.type || 'ədəd',
+      });
+      setImageUrl(raw.img_url || raw.image || '');
+    } else {
+      form.resetFields();
+      resetImage();
+    }
     setShowFormModal(true);
   };
 
-  const handleSaveProduct = async (payload: Omit<Product, 'id'>, id?: string | number) => {
-    if (id) {
-      await productsAPI.update(id, payload);
-      updateProduct(id, { ...payload, id });
-      toast.success('Məhsul uğurla yeniləndi');
-    } else {
-      const newId = Math.floor(Math.random() * 900000) + 100000;
-      const newItem: Product = { id: newId, ...payload };
-      await productsAPI.create(payload);
-      addProduct(newItem);
-      toast.success('Yeni məhsul əlavə edildi');
-    }
-    setShowFormModal(false);
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (!selectedProduct) return;
+  const handleSaveProduct = async () => {
     try {
-      await productsAPI.remove(selectedProduct.id);
-      deleteProduct(selectedProduct.id);
-      toast.success('Məhsul silindi');
-      setShowDeleteModal(false);
-      setSelectedProduct(null);
-    } catch (err) {
-      console.error('Delete error:', err);
-      toast.error('Silinmə zamanı xəta baş verdi');
+      const values = await form.validateFields();
+      setSubmitting(true);
+      if (!imageUrl) {
+        message.warning('Zəhmət olmasa şəkil yükləyin');
+        return;
+      }
+
+      const payload: Record<string, any> = {
+        title: values.title,
+        description: values.description || '',
+        price: String(values.price),
+        category_id: Number(values.category_id),
+        type: values.type || 'ədəd',
+        img_url: imageUrl,
+      };
+
+      if (selectedProduct?.id) {
+        await productsAPI.update(selectedProduct.id, payload);
+        updateProduct(selectedProduct.id, { ...payload, id: selectedProduct.id });
+        message.success('Məhsul uğurla yeniləndi');
+      } else {
+        await productsAPI.create(payload);
+        await fetchData();
+        message.success('Yeni məhsul əlavə edildi');
+      }
+      setShowFormModal(false);
+      form.resetFields();
+      resetImage();
+    } catch (err: any) {
+      if (err?.errorFields) return;
+      const apiMsg = err?.response?.data?.message || err?.response?.data?.error || '';
+      console.error('[Product Save] Error:', err?.response?.data || err);
+      message.error(apiMsg || 'Gözlənilməz xəta baş verdi');
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const getCategoryName = (id: string | number) => {
-    const cat = categories.find((c: Category) => String(c.id) === String(id));
-    return cat?.title || 'Kateqoriyasız';
+  const handleDelete = (item: Product) => {
+    setDeleteTarget(item);
   };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await productsAPI.remove(deleteTarget.id);
+      deleteProduct(deleteTarget.id);
+      message.success('Məhsul silindi');
+      setDeleteTarget(null);
+    } catch {
+      message.error('Silinmə zamanı xəta baş verdi');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return '-';
+    const d = dayjs(dateStr);
+    return d.isValid() ? d.format('DD.MM.YYYY') : dateStr;
+  };
+
+  const columns: ColumnsType<Product> = [
+    {
+      title: 'Sıra',
+      key: 'index',
+      width: 45,
+      render: (_: unknown, __: Product, index: number) => index + 1,
+    },
+    {
+      title: 'Şəkil',
+      key: 'image',
+      width: 55,
+      render: (_: unknown, record: Product) => {
+        const url = resolveImg(record);
+        return (
+          <img
+            src={url || '/logo-mock.png'}
+            alt=""
+            style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover' }}
+            onError={(e) => { e.currentTarget.src = '/logo-mock.png'; }}
+          />
+        );
+      },
+    },
+    {
+      title: 'Ad',
+      dataIndex: 'title',
+      key: 'title',
+      width: 120,
+      ellipsis: true,
+      sorter: (a: Product, b: Product) => (a.title || '').localeCompare(b.title || ''),
+      render: (title: string) => <strong>{title || 'Adsız məhsul'}</strong>,
+    },
+    {
+      title: 'Açıqlama',
+      dataIndex: 'description',
+      key: 'description',
+      ellipsis: true,
+      render: (desc: string) => <span style={{ color: '#8c8c8c' }}>{desc || '-'}</span>,
+    },
+    {
+      title: 'Qiymət',
+      dataIndex: 'price',
+      key: 'price',
+      width: 80,
+      sorter: (a: Product, b: Product) => Number(a.price || 0) - Number(b.price || 0),
+      render: (price: number | string) => <strong>{Number(price || 0).toFixed(2)} ₼</strong>,
+    },
+    {
+      title: 'Kateqoriya',
+      key: 'category',
+      width: 130,
+      render: (_: unknown, record: Product) => {
+        const raw = record as any;
+        const name = raw.category?.name || raw.category?.title || '';
+        return name
+          ? <Tag color="green" style={{ borderRadius: 12 }}>{name}</Tag>
+          : <span style={{ color: '#bfbfbf' }}>-</span>;
+      },
+    },
+    {
+      title: 'Tip',
+      key: 'type',
+      width: 60,
+      render: (_: unknown, record: Product) => {
+        const t = (record as any).type;
+        return t ? <Tag color="blue" style={{ borderRadius: 12 }}>{t}</Tag> : '-';
+      },
+    },
+    {
+      title: 'Tarix',
+      key: 'date',
+      width: 90,
+      render: (_: unknown, record: Product) => formatDate((record as any).created_at),
+    },
+    {
+      title: 'Əməliyyat',
+      key: 'actions',
+      align: 'center' as const,
+      width: 140,
+      render: (_: unknown, record: Product) => (
+        <Space size={4}>
+          <Tag
+            color="green"
+            style={{ borderRadius: 12, cursor: 'pointer', marginRight: 0 }}
+            icon={<CheckOutlined />}
+          >
+            Deaktiv
+          </Tag>
+          <Button
+            type="text"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => handleOpenForm(record)}
+            style={{ color: '#52c41a' }}
+          />
+          <Button
+            type="text"
+            size="small"
+            icon={<DeleteOutlined />}
+            onClick={() => handleDelete(record)}
+            danger
+          />
+        </Space>
+      ),
+    },
+  ];
+
+  const categoryOptions = useMemo(() => {
+    return categories.map((c: any) => ({
+      label: c.name || c.title || `Kateqoriya #${c.id}`,
+      value: String(c.id),
+    }));
+  }, [categories]);
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 flex flex-col h-full">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-        <h2 className="text-xl font-bold text-gray-900">Məhsullar</h2>
-        
-        <div className="flex gap-3 w-full sm:w-auto">
-          <Input 
-            placeholder="Axtarış..." 
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            icon={<HiOutlineMagnifyingGlass className="w-5 h-5" />}
-            className="w-full sm:w-64"
-          />
-          <Button onClick={() => handleOpenForm(null)}>
-            <HiPlus className="w-5 h-5 mr-1" /> Yeni Məhsul
-          </Button>
-        </div>
+    <Card variant="borderless" style={{ borderRadius: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <Title level={4} style={{ margin: 0, color: '#2b3043' }}>Məhsullar</Title>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => handleOpenForm(null)}>
+          Yeni Məhsul
+        </Button>
       </div>
 
-      <div className="overflow-x-auto min-h-[400px]">
-        {loading && products.length === 0 ? (
-          <TableSkeleton columns={5} rows={PAGE_SIZE} />
-        ) : (
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-gray-100 text-sm font-medium text-gray-500 bg-gray-50/50">
-                <th className="p-4 font-medium">Şəkil</th>
-                <th className="p-4 font-medium">Ad</th>
-                <th className="p-4 font-medium">Kateqoriya</th>
-                <th className="p-4 font-medium">Qiymət</th>
-                <th className="p-4 font-medium text-right">Əməliyyat</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginatedData.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="text-center p-12 text-gray-400">
-                    Siyahıda məhsul tapılmadı.
-                  </td>
-                </tr>
-              ) : (
-                paginatedData.map((item: Product) => (
-                  <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                    <td className="p-4">
-                      <div className="w-10 h-10 rounded-lg overflow-hidden bg-gray-100 border border-gray-200">
-                        <img 
-                          src={item.image || '/logo-mock.png'} 
-                          alt={item.title || 'product'} 
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    </td>
-                    <td className="p-4 font-semibold text-gray-900">
-                      {item.title || 'Adsız məhsul'}
-                    </td>
-                    <td className="p-4 text-sm text-gray-600">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">
-                        {getCategoryName(item.category_id)}
-                      </span>
-                    </td>
-                    <td className="p-4 font-bold text-accent">
-                      {Number(item.price || 0).toFixed(2)} ₼
-                    </td>
-                    <td className="p-4 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button 
-                          className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Düzəlt"
-                          onClick={() => handleOpenForm(item)}
-                        >
-                          <HiOutlinePencilSquare className="w-5 h-5" />
-                        </button>
-                        <button 
-                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Sil"
-                          onClick={() => {
-                            setSelectedProduct(item);
-                            setShowDeleteModal(true);
-                          }}
-                        >
-                          <HiOutlineTrash className="w-5 h-5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+      <Table
+        columns={columns}
+        dataSource={filteredProducts}
+        rowKey={(record) => String(record.id)}
+        loading={loading}
+        pagination={{
+          pageSize: PAGE_SIZE,
+          showTotal: (total, range) => `${range[0]}-${range[1]} / ${total} nəticə`,
+          showSizeChanger: false,
+        }}
+        size="small"
+        tableLayout="fixed"
+      />
+
+      <Modal
+        title={selectedProduct ? 'Məhsulu düzəlt' : 'Yeni Məhsul'}
+        open={showFormModal}
+        onCancel={() => { setShowFormModal(false); form.resetFields(); resetImage(); }}
+        onOk={handleSaveProduct}
+        okText="Yadda saxla"
+        cancelText="İmtina"
+        confirmLoading={submitting || uploading}
+        centered
+        forceRender
+      >
+        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item name="title" label="Ad" rules={[{ required: true, message: 'Məhsul adı mütləqdir' }]}>
+            <Input placeholder="Məhsulun adı" />
+          </Form.Item>
+          <Form.Item name="category_id" label="Kateqoriya" rules={[{ required: true, message: 'Kateqoriya seçin' }]}>
+            <Select
+              placeholder="Kateqoriya seçin"
+              options={categoryOptions}
+              showSearch
+              optionFilterProp="label"
+            />
+          </Form.Item>
+          <Form.Item name="price" label="Qiymət (₼)" rules={[{ required: true, message: 'Qiymət daxil edin' }]}>
+            <InputNumber placeholder="0.00" step={0.01} min={0} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="type" label="Tip">
+            <Select
+              placeholder="Ölçü tipi seçin"
+              options={[
+                { label: 'kq', value: 'kg' },
+                { label: 'ədəd', value: 'ədəd' },
+                { label: 'litr', value: 'litr' },
+                { label: 'paket', value: 'paket' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item label="Şəkil" required>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {imageUrl && (
+                <img
+                  src={imageUrl}
+                  alt=""
+                  style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover' }}
+                />
               )}
-            </tbody>
-          </table>
-        )}
-      </div>
+              <Upload
+                showUploadList={false}
+                accept="image/*"
+                beforeUpload={(file) => {
+                  uploadImage(file)
+                    .then(() => message.success('Şəkil yükləndi'))
+                    .catch(() => message.error('Şəkil yüklənərkən xəta'));
+                  return false;
+                }}
+              >
+                <Button icon={<UploadOutlined />} loading={uploading}>
+                  {imageUrl ? 'Dəyişdir' : 'Şəkil yüklə'}
+                </Button>
+              </Upload>
+            </div>
+          </Form.Item>
+          <Form.Item name="description" label="Açıqlama">
+            <TextArea rows={3} placeholder="Məhsul haqqında məlumat..." />
+          </Form.Item>
+        </Form>
+      </Modal>
 
-      {!loading && filteredProducts.length > 0 && (
-        <Pagination
-          className="mt-6"
-          currentPage={currentPage}
-          totalCount={filteredProducts.length}
-          pageSize={PAGE_SIZE}
-          onPageChange={setCurrentPage}
-        />
-      )}
-
-      {showFormModal && (
-        <ProductForm 
-          initialData={selectedProduct}
-          categories={categories}
-          onClose={() => setShowFormModal(false)}
-          onSave={handleSaveProduct}
-        />
-      )}
-
-      {showDeleteModal && (
-        <DeleteModal
-          onClose={() => {
-            setShowDeleteModal(false);
-            setSelectedProduct(null);
-          }}
-          onConfirm={handleDeleteConfirm}
-          title="Məhsulu Sil"
-          message={`"${selectedProduct?.title}" adlı məhsulu silmək istədiyinizə əminsiniz?`}
-        />
-      )}
-    </div>
+      <DeleteConfirmModal
+        open={!!deleteTarget}
+        loading={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
+    </Card>
   );
 };
 

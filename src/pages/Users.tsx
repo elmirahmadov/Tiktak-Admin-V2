@@ -1,28 +1,36 @@
 import { useState, useEffect, useMemo, FC } from 'react';
 import { usersAPI } from '../api';
 import { useDataStore } from '../store/dataStore';
-import { HiOutlineUsers, HiOutlineMagnifyingGlass } from 'react-icons/hi2';
 import { User } from '../types';
-import toast from 'react-hot-toast';
-
-// Atomic UI Components
-import { Input } from '../components/ui/Input';
-import { Pagination } from '../components/ui/Pagination';
-import { TableSkeleton } from '../components/ui/TableSkeleton';
-
-// Advanced Hooks
+import { Table, Avatar, Tag, Card, Typography, Button, Modal, App } from 'antd';
+import {
+  EyeOutlined,
+  UserOutlined,
+  PhoneOutlined,
+  EnvironmentOutlined,
+  CalendarOutlined,
+} from '@ant-design/icons';
+import type { ColumnsType } from 'antd/es/table';
 import { useDebounce } from '../hooks/useDebounce';
+import { getImageUrl } from '../utils/imageUrl';
+import dayjs from 'dayjs';
 
-const PAGE_SIZE = 10;
+const { Title } = Typography;
+const PAGE_SIZE = 5;
+
+const getInitials = (name?: string) => {
+  if (!name) return '?';
+  return name.charAt(0).toUpperCase();
+};
 
 const Users: FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const { loading, setLoading } = useDataStore();
-  
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 300);
-  
-  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const { message } = App.useApp();
 
   const fetchData = async () => {
     setLoading(true);
@@ -30,17 +38,25 @@ const Users: FC = () => {
       const res = await usersAPI.list();
       const data = res.data.data || res.data.users || (Array.isArray(res.data) ? res.data : []);
       setUsers(data);
-    } catch (err) {
-      console.error('API Error:', err);
-      toast.error('İstifadəçilər yüklənərkən xəta baş verdi');
+    } catch {
+      message.error('İstifadəçilər yüklənərkən xəta baş verdi');
       if (users.length === 0) setUsers([]);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { 
-    fetchData(); 
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      setSearch(customEvent.detail || '');
+    };
+    window.addEventListener('globalSearch', handler);
+    return () => window.removeEventListener('globalSearch', handler);
   }, []);
 
   const filteredUsers = useMemo(() => {
@@ -50,98 +66,288 @@ const Users: FC = () => {
     );
   }, [users, debouncedSearch]);
 
-  const paginatedData = useMemo(() => {
-    const firstPageIndex = (currentPage - 1) * PAGE_SIZE;
-    const lastPageIndex = firstPageIndex + PAGE_SIZE;
-    return filteredUsers.slice(firstPageIndex, lastPageIndex);
-  }, [currentPage, filteredUsers]);
+  const handleShowDetail = (user: User) => {
+    setSelectedUser(user);
+    setDetailOpen(true);
+  };
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedSearch]);
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return '-';
+    const d = dayjs(dateStr);
+    return d.isValid() ? d.format('DD MMMM YYYY, HH:mm') : dateStr;
+  };
+
+  const columns: ColumnsType<User> = [
+    {
+      title: 'Sıra',
+      key: 'index',
+      width: 50,
+      render: (_: unknown, __: User, index: number) => index + 1,
+    },
+    {
+      title: 'Avatar',
+      dataIndex: 'avatar',
+      key: 'avatar',
+      width: 60,
+      render: (avatar: string, record: User) => {
+        const url = getImageUrl(avatar);
+        return (
+          <Avatar
+            src={url || undefined}
+            style={{ backgroundColor: '#52c41a', fontWeight: 700 }}
+          >
+            {getInitials(record.full_name)}
+          </Avatar>
+        );
+      },
+    },
+    {
+      title: 'Ad Soyad',
+      dataIndex: 'full_name',
+      key: 'full_name',
+      sorter: (a: User, b: User) => (a.full_name || '').localeCompare(b.full_name || ''),
+      render: (name: string) => <strong>{name}</strong>,
+    },
+    {
+      title: 'Telefon',
+      dataIndex: 'phone',
+      key: 'phone',
+    },
+    {
+      title: 'Ünvan',
+      key: 'address',
+      ellipsis: true,
+      render: (_: unknown, record: User) => {
+        const addr = (record as any).address || (record as any).delivery_address;
+        return addr
+          ? <span>{addr}</span>
+          : <span style={{ color: '#bfbfbf' }}>Qeyd olunmayıb</span>;
+      },
+    },
+    {
+      title: 'Rol',
+      dataIndex: 'role',
+      key: 'role',
+      width: 120,
+      render: (role: string) => (
+        <Tag color="green" style={{ borderRadius: 12 }}>
+          {(role || 'COMMERCE').toUpperCase()}
+        </Tag>
+      ),
+    },
+    {
+      title: 'Əməliyyat',
+      key: 'actions',
+      align: 'center' as const,
+      width: 90,
+      render: (_: unknown, record: User) => (
+        <Button
+          type="link"
+          icon={<EyeOutlined />}
+          style={{ color: '#52c41a', padding: 0 }}
+          onClick={() => handleShowDetail(record)}
+        >
+          Göstər
+        </Button>
+      ),
+    },
+  ];
+
+  const userAddr = selectedUser
+    ? (selectedUser as any).address || (selectedUser as any).delivery_address || null
+    : null;
+
+  const userDate = selectedUser
+    ? (selectedUser as any).created_at || (selectedUser as any).createdAt || null
+    : null;
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 flex flex-col h-full">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-        <h2 className="text-xl font-bold text-gray-900">İstifadəçilər</h2>
-        
-        <div className="w-full sm:w-72">
-          <Input 
-            placeholder="Ad və ya telefonla axtarış..." 
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            icon={<HiOutlineMagnifyingGlass className="w-5 h-5" />}
-            className="w-full"
-          />
+    <Card variant="borderless" style={{ borderRadius: 16 }}>
+      <Title level={4} style={{ marginBottom: 24, color: '#2b3043' }}>İstifadəçilər</Title>
+
+      <Table
+        columns={columns}
+        dataSource={filteredUsers}
+        rowKey={(record) => String(record.id)}
+        loading={loading}
+        pagination={{
+          pageSize: PAGE_SIZE,
+          showTotal: (total, range) => `${range[0]}-${range[1]} / ${total} nəticə`,
+          showSizeChanger: false,
+        }}
+        size="small"
+        tableLayout="fixed"
+      />
+
+      <Modal
+        open={detailOpen}
+        onCancel={() => setDetailOpen(false)}
+        footer={null}
+        closable={false}
+        centered
+        destroyOnHidden
+        width={420}
+        styles={{ body: { padding: 0 } }}
+      >
+        {/* Green header */}
+        <div
+          style={{
+            background: 'linear-gradient(135deg, #3a3f47 0%, #2b3043 100%)',
+            borderRadius: '8px 8px 0 0',
+            padding: '16px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <UserOutlined style={{ color: '#fff', fontSize: 20 }} />
+            <span style={{ color: '#fff', fontSize: 16, fontWeight: 600 }}>
+              İstifadəçi Detayları
+            </span>
+          </div>
+          <Button
+            type="text"
+            size="small"
+            onClick={() => setDetailOpen(false)}
+            style={{ color: '#fff', fontSize: 18, lineHeight: 1 }}
+          >
+            ✕
+          </Button>
         </div>
-      </div>
 
-      <div className="overflow-x-auto min-h-[400px]">
-        {loading && users.length === 0 ? (
-          <TableSkeleton columns={4} rows={PAGE_SIZE} />
-        ) : (
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-gray-100 text-sm font-medium text-gray-500 bg-gray-50/50">
-                <th className="p-4 font-medium">İstifadəçi</th>
-                <th className="p-4 font-medium">Telefon</th>
-                <th className="p-4 font-medium">Rol</th>
-                <th className="p-4 font-medium text-right">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginatedData.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="text-center p-12 text-gray-400">
-                    Siyahıda istifadəçi tapılmadı.
-                  </td>
-                </tr>
-              ) : (
-                paginatedData.map((item: User) => (
-                  <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                    <td className="p-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-500 overflow-hidden flex-shrink-0">
-                          {item.avatar ? (
-                            <img src={item.avatar} alt="avatar" className="w-full h-full object-cover" />
-                          ) : (
-                            <HiOutlineUsers className="w-5 h-5" />
-                          )}
-                        </div>
-                        <span className="font-semibold text-gray-900">{item.full_name}</span>
-                      </div>
-                    </td>
-                    <td className="p-4 text-gray-600 font-medium">
-                      {item.phone}
-                    </td>
-                    <td className="p-4">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 capitalize">
-                        {item.role || 'user'}
-                      </span>
-                    </td>
-                    <td className="p-4 text-right">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-50 text-green-700 border border-green-200">
-                        Aktiv
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        )}
-      </div>
+        {/* Avatar + Name + Role */}
+        <div style={{ textAlign: 'center', padding: '28px 20px 16px' }}>
+          <Avatar
+            src={selectedUser?.avatar ? getImageUrl(selectedUser.avatar) : undefined}
+            size={72}
+            style={{
+              backgroundColor: '#52c41a',
+              fontSize: 28,
+              fontWeight: 700,
+              marginBottom: 12,
+            }}
+          >
+            {getInitials(selectedUser?.full_name)}
+          </Avatar>
+          <div style={{ fontSize: 18, fontWeight: 600, color: '#2b3043', marginBottom: 8 }}>
+            {selectedUser?.full_name || '-'}
+          </div>
+          <Tag
+            color="green"
+            style={{ borderRadius: 12, fontSize: 12, padding: '2px 14px' }}
+          >
+            {(selectedUser?.role || 'COMMERCE').toUpperCase()}
+          </Tag>
+        </div>
 
-      {!loading && filteredUsers.length > 0 && (
-        <Pagination
-          className="mt-6"
-          currentPage={currentPage}
-          totalCount={filteredUsers.length}
-          pageSize={PAGE_SIZE}
-          onPageChange={setCurrentPage}
-        />
-      )}
-    </div>
+        {/* Info card */}
+        <div style={{ padding: '0 20px 24px' }}>
+          <div
+            style={{
+              border: '1px solid #f0f0f0',
+              borderRadius: 12,
+              overflow: 'hidden',
+            }}
+          >
+            {/* Telefon */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '14px 16px',
+                borderBottom: '1px solid #f0f0f0',
+              }}
+            >
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: '50%',
+                  background: '#f6ffed',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <PhoneOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: '#8c8c8c' }}>Telefon</div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: '#2b3043' }}>
+                  {selectedUser?.phone || '-'}
+                </div>
+              </div>
+            </div>
+
+            {/* Ünvan */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '14px 16px',
+                borderBottom: '1px solid #f0f0f0',
+              }}
+            >
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: '50%',
+                  background: '#f6ffed',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <EnvironmentOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: '#8c8c8c' }}>Ünvan</div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: '#2b3043' }}>
+                  {userAddr || 'Ünvan yoxdur'}
+                </div>
+              </div>
+            </div>
+
+            {/* Yaradılma tarixi */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '14px 16px',
+              }}
+            >
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: '50%',
+                  background: '#f6ffed',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <CalendarOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: '#8c8c8c' }}>Yaradılma tarixi</div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: '#2b3043' }}>
+                  {formatDate(userDate)}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Modal>
+    </Card>
   );
 };
 

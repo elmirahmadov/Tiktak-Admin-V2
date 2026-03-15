@@ -35,14 +35,21 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response interceptor - handle 401
+// Response interceptor - handle 401 and log errors
 api.interceptors.response.use(
   (response: AxiosResponse) => response,
   (error) => {
     const isLoginRequest = error.config?.url?.includes(API.auth.login);
+
+    if (error.response) {
+      console.error(
+        `[API] ${error.config?.method?.toUpperCase()} ${error.config?.url} → ${error.response.status}`,
+        '\nRequest body:', error.config?.data ? JSON.parse(error.config.data) : null,
+        '\nResponse:', error.response.data,
+      );
+    }
     
     if (error.response?.status === 401 && !isLoginRequest) {
-      console.error('[API] 401 Unauthorized - Token expired or invalid.');
       if (useAuthStore.getState().token) {
         useAuthStore.getState().logout();
       }

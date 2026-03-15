@@ -9,7 +9,9 @@ export interface Campaign {
 export interface Category {
   id: string | number;
   title: string;
+  name?: string;
   image?: string;
+  img_url?: string;
   description?: string;
   created_at?: string;
 }
@@ -21,7 +23,9 @@ export interface Product {
   price: string | number;
   category_id: string | number;
   image?: string;
+  img_url?: string;
   stock?: number;
+  type?: string;
 }
 
 export interface Order {
