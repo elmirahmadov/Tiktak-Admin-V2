@@ -32,14 +32,26 @@ const Orders: FC = () => {
     try {
       const res = await ordersAPI.list();
       const rawData = res.data.data || res.data.orders || res.data.items || (Array.isArray(res.data) ? res.data : []);
+      // Konsolda API cavabını yoxlamaq üçün: F12 → Console
+      if (rawData.length > 0) console.log('Orders API cavabı (ilk sifariş):', rawData[0]);
       const data = rawData.map((item: any) => {
         const rawDate = item.date || item.created_at || item.createdAt || item.order_date || item.updatedAt || item.updated_at || '';
         const parsed = rawDate ? dayjs(rawDate) : null;
+        const itemCount =
+          item.itemCount ??
+          item.items_count ??
+          item.order_items_count ??
+          item.product_count ??
+          (Array.isArray(item.order_items) ? item.order_items.length : null) ??
+          (Array.isArray(item.items) ? item.items.length : null) ??
+          (Array.isArray(item.products) ? item.products.length : null);
         return {
           ...item,
           address: item.address || item.delivery_address || item.deliveryAddress || 'Ünvan qeyd olunmayıb',
           date: parsed?.isValid() ? parsed.format('DD.MM.YYYY') : '',
+          dateDisplay: parsed?.isValid() ? parsed.format('DD/MM') : '', // 06/03 formatı
           time: item.time || (parsed?.isValid() ? parsed.format('HH:mm') : ''),
+          itemCount: itemCount ?? 0,
         };
       });
       setOrders(data);
@@ -139,7 +151,7 @@ const Orders: FC = () => {
     {
       title: 'No',
       key: 'id',
-      width: 90,
+      width: 100,
       render: (_: unknown, record: Order) => (
         <Text strong style={{ fontSize: 13 }}>ORD-{String(record.id).slice(0, 2)}...</Text>
       ),
@@ -147,10 +159,10 @@ const Orders: FC = () => {
     {
       title: 'Tarix',
       key: 'date',
-      width: 70,
+      width: 90,
       sorter: true,
       render: (_: unknown, record: Order) => (
-        <span style={{ fontSize: 13 }}>{record.time || record.date || '-'}</span>
+        <span style={{ fontSize: 13 }}>{(record as any).dateDisplay || record.date || '-'}</span>
       ),
     },
     {
@@ -158,21 +170,22 @@ const Orders: FC = () => {
       dataIndex: 'address',
       key: 'address',
       ellipsis: true,
+      width: 200,
       render: (addr: string) => <span style={{ fontSize: 13 }}>{addr}</span>,
     },
     {
       title: 'Məhsul sayı',
       dataIndex: 'itemCount',
       key: 'itemCount',
-      width: 90,
+      width: 110,
       align: 'center' as const,
       sorter: true,
-      render: (count: number) => <span style={{ fontSize: 13 }}>{count || '-'}</span>,
+      render: (count: number) => <span style={{ fontSize: 13 }}>{typeof count === 'number' ? count : '-'}</span>,
     },
     {
       title: 'Subtotal/Çatdırılma',
       key: 'total',
-      width: 150,
+      width: 170,
       sorter: true,
       render: (_: unknown, record: Order) => (
         <span style={{ fontSize: 13 }}>
@@ -185,7 +198,7 @@ const Orders: FC = () => {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
-      width: 120,
+      width: 130,
       filters: [
         { text: 'Gözləyir', value: 'PENDING' },
         { text: 'Təsdiqləndi', value: 'CONFIRMED' },
@@ -200,7 +213,7 @@ const Orders: FC = () => {
       title: 'Əməliyyat',
       key: 'actions',
       align: 'center' as const,
-      width: 90,
+      width: 110,
       render: (_: unknown, record: Order) => (
         <Button
           type="link"
@@ -236,7 +249,7 @@ const Orders: FC = () => {
         </div>
       </Card>
 
-      <Card variant="borderless" style={{ borderRadius: 16 }}>
+      <Card variant="borderless" style={{ borderRadius: 16 }} className="orders-table-card">
         <Table
           columns={columns}
           dataSource={filteredOrders}
@@ -249,7 +262,7 @@ const Orders: FC = () => {
             pageSizeOptions: ['5', '10', '20'],
           }}
           size="middle"
-          tableLayout="fixed"
+          scroll={{ x: 'max-content' }}
         />
       </Card>
 
